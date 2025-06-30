@@ -56,7 +56,9 @@ contract ATC is ERC20, Ownable, ReentrancyGuard, Pausable {
     uint256 public constant PHASE3_DECAY = 999_950;
     
     uint256 private constant PHASE3_DECAY_SCALED = 999_950 * 10**18 / 1_000_000;
-    uint256 public constant MAX_TX_AMOUNT = MAX_SUPPLY / 100; // 1% of total supply
+    uint256 public constant MIN_TX_AMOUNT = 100 * 10**18; // 100 ATC minimum
+    uint256 public constant MAX_TX_AMOUNT_LIMIT = MAX_SUPPLY / 100; // 10M ATC maximum (1%)
+    uint256 public maxTxAmount = 1_000 * 10**18; // 1,000 ATC default (adjustable)
     uint256 private constant TAX_DENOMINATOR = 10_000;
     uint256 private constant MAX_TAX_RATE = 2_500; // 25%
     uint256 private constant SLIPPAGE_TOLERANCE = 9500; // 95% (5% slippage)
@@ -81,7 +83,6 @@ contract ATC is ERC20, Ownable, ReentrancyGuard, Pausable {
     TaxRates public taxRates;
     
     address public devWallet;
-    address public artistWallet;
     address public marketingWallet;
     
     uint256 public totalLiquidityAdded;
@@ -129,12 +130,13 @@ contract ATC is ERC20, Ownable, ReentrancyGuard, Pausable {
     event AntiWhaleExemptUpdated(address indexed account, bool exempt);
     event AutomatedMarketMakerPairUpdated(address indexed pair, bool value);
     event ExcludedFromFeeUpdated(address indexed account, bool excluded);
+    event MaxTxAmountUpdated(uint256 oldLimit, uint256 newLimit);
     
     // ======== Modifiers ========
     modifier antiWhale(address from, address to, uint256 amount) {
         if (!isExcludedFromFee[from] && !isExcludedFromFee[to] && 
             !isAntiWhaleExempt[from] && !isAntiWhaleExempt[to]) {
-            require(amount <= MAX_TX_AMOUNT, "Transfer exceeds max transaction");
+            require(amount <= maxTxAmount, "Transfer exceeds max transaction");
         }
         _;
     }
@@ -191,24 +193,22 @@ contract ATC is ERC20, Ownable, ReentrancyGuard, Pausable {
         
         // Initialize wallets
         devWallet = 0x73aDd9B0Fae851F9f203Ba5346D240C32d5af259;
-        artistWallet = 0xfbd336B10D3Aa003bB0491277bd1b100a7600b7A;
         marketingWallet = 0xc5e979514ebE80172EdBa7c7cfE38B599E4e4823;
         
-        // Initialize tax rates (25% buy/sell tax)
+        // Initialize tax rates (25% buy/sell tax) - UPDATED FOR SOUND MONEY
         taxRates = TaxRates({
-            buyTax: 2_500,  // 25%
-            sellTax: 2_500, // 25%
-            liquidityTax: 500,
-            devTax: 1_000,
-            artistTax: 500,
-            marketingTax: 500
+            buyTax: 2_500,        // 25%
+            sellTax: 2_500,       // 25%
+            liquidityTax: 1_000,  // 10% (increased from 5%)
+            devTax: 1_000,        // 10%
+            artistTax: 0,         // 0% (removed)
+            marketingTax: 500     // 5%
         });
         
         // Set exclusions
         isExcludedFromFee[_msgSender()] = true;
         isExcludedFromFee[address(this)] = true;
         isExcludedFromFee[devWallet] = true;
-        isExcludedFromFee[artistWallet] = true;
         isExcludedFromFee[marketingWallet] = true;
         
         // Set anti-whale exemptions
@@ -222,7 +222,7 @@ contract ATC is ERC20, Ownable, ReentrancyGuard, Pausable {
         dailyEmission = PHASE1_RATE;
         _lastEmissionUpdateDay = lastEmissionDay;
         _memoizedDailyEmission = PHASE1_RATE;
-        totalLiquidityAdded = 80_000 * 10**18;
+        totalLiquidityAdded = 1_000 * 10**18;  // Ultra-scarce launch with 1,000 ATC
         
         // Pre-approve router for gas savings
         _approve(address(this), router, type(uint256).max);
@@ -264,7 +264,6 @@ contract ATC is ERC20, Ownable, ReentrancyGuard, Pausable {
     function setBlacklist(address account, bool blacklisted) 
         external 
         onlyOwner 
-        timelocked("setBlacklist")
         validAddress(account)
     {
         require(account != owner(), "Cannot blacklist owner");
@@ -279,7 +278,6 @@ contract ATC is ERC20, Ownable, ReentrancyGuard, Pausable {
     function setExcludedFromFee(address account, bool excluded) 
         external 
         onlyOwner 
-        timelocked("setExcludedFromFee")
         validAddress(account)
     {
         isExcludedFromFee[account] = excluded;
@@ -293,6 +291,21 @@ contract ATC is ERC20, Ownable, ReentrancyGuard, Pausable {
     {
         isAntiWhaleExempt[account] = exempt;
         emit AntiWhaleExemptUpdated(account, exempt);
+    }
+    
+    function setMaxTxAmount(uint256 newMaxTxAmount) 
+        external 
+        onlyOwner 
+        timelocked("setMaxTxAmount")
+    {
+        require(newMaxTxAmount >= MIN_TX_AMOUNT, "Below minimum limit");
+        require(newMaxTxAmount <= MAX_TX_AMOUNT_LIMIT, "Exceeds maximum limit");
+        require(newMaxTxAmount != maxTxAmount, "Same as current limit");
+        
+        uint256 oldMaxTxAmount = maxTxAmount;
+        maxTxAmount = newMaxTxAmount;
+        
+        emit MaxTxAmountUpdated(oldMaxTxAmount, newMaxTxAmount);
     }
     
     function setAutomatedMarketMakerPair(address _pair, bool value) 
@@ -338,32 +351,27 @@ contract ATC is ERC20, Ownable, ReentrancyGuard, Pausable {
     
     function updateWallets(
         address _devWallet,
-        address _artistWallet,
         address _marketingWallet
     ) 
         external 
         onlyOwner 
         timelocked("updateWallets")
         validAddress(_devWallet)
-        validAddress(_artistWallet)
         validAddress(_marketingWallet)
     {
         // Remove old exclusions
         isExcludedFromFee[devWallet] = false;
-        isExcludedFromFee[artistWallet] = false;
         isExcludedFromFee[marketingWallet] = false;
         
         // Update wallets
         devWallet = _devWallet;
-        artistWallet = _artistWallet;
         marketingWallet = _marketingWallet;
         
         // Add new exclusions
         isExcludedFromFee[_devWallet] = true;
-        isExcludedFromFee[_artistWallet] = true;
         isExcludedFromFee[_marketingWallet] = true;
         
-        emit WalletsUpdated(_devWallet, _artistWallet, _marketingWallet);
+        emit WalletsUpdated(_devWallet, address(0), _marketingWallet);
     }
     
     // ======== LP Token Management ========
@@ -535,11 +543,10 @@ contract ATC is ERC20, Ownable, ReentrancyGuard, Pausable {
         uint256 totalTaxBasis = taxRate; // Use actual tax rate as basis
         uint256 liquidityAmount = (taxAmount * taxRates.liquidityTax) / totalTaxBasis;
         uint256 devAmount = (taxAmount * taxRates.devTax) / totalTaxBasis;
-        uint256 artistAmount = (taxAmount * taxRates.artistTax) / totalTaxBasis;
         uint256 marketingAmount = (taxAmount * taxRates.marketingTax) / totalTaxBasis;
         
         // Handle any dust from rounding
-        uint256 dust = taxAmount - (liquidityAmount + devAmount + artistAmount + marketingAmount);
+        uint256 dust = taxAmount - (liquidityAmount + devAmount + marketingAmount);
         if (dust > 0) {
             marketingAmount += dust;
         }
@@ -559,15 +566,11 @@ contract ATC is ERC20, Ownable, ReentrancyGuard, Pausable {
             super._update(from, devWallet, devAmount);
         }
         
-        if (artistAmount > 0) {
-            super._update(from, artistWallet, artistAmount);
-        }
-        
         if (marketingAmount > 0) {
             super._update(from, marketingWallet, marketingAmount);
         }
         
-        emit TaxDistributed(from, liquidityAmount, devAmount, artistAmount, marketingAmount);
+        emit TaxDistributed(from, liquidityAmount, devAmount, 0, marketingAmount);
     }
     
     // ======== Liquidity Processing ========
@@ -681,6 +684,130 @@ contract ATC is ERC20, Ownable, ReentrancyGuard, Pausable {
         _consecutiveSwapFailures = 0;
     }
     
+    // ======== Liquidity Tax Management Functions ========
+    function withdrawLiquidityTax(uint256 amount) external onlyOwner nonReentrant {
+        require(amount > 0, "Zero amount");
+        require(amount <= atcForLiquidity, "Insufficient balance");
+        
+        atcForLiquidity -= amount;
+        super._update(address(this), owner(), amount);
+    }
+
+    function withdrawAllLiquidityTax() external onlyOwner nonReentrant {
+        uint256 amount = atcForLiquidity;
+        require(amount > 0, "No liquidity tax");
+        
+        atcForLiquidity = 0;
+        super._update(address(this), owner(), amount);
+    }
+
+    function addAllLiquidityTax() external onlyOwner nonReentrant whenNotPaused {
+        require(atcForLiquidity >= MIN_ATC_FOR_PROCESSING, "Insufficient ATC");
+        
+        uint256 atcAmount = atcForLiquidity;
+        uint256 halfAtc = atcAmount / 2;
+        uint256 otherHalf = atcAmount - halfAtc;
+        
+        uint256 initialBalance = address(this).balance;
+        
+        // Swap half for BNB
+        require(_swapTokensForBNB(halfAtc), "Swap failed");
+        
+        uint256 bnbReceived = address(this).balance - initialBalance;
+        require(bnbReceived > 0, "No BNB received");
+        
+        // Add liquidity
+        (bool success, uint256 lpTokensReceived) = _addLiquidity(otherHalf, bnbReceived);
+        require(success, "Liquidity addition failed");
+        
+        // Update state on success
+        atcForLiquidity = 0;
+        unchecked {
+            totalLiquidityAdded = totalLiquidityAdded + otherHalf;
+            lpTokensInContract = lpTokensInContract + lpTokensReceived;
+        }
+    }
+
+    function addSpecificLiquidityTax(uint256 atcAmount) external onlyOwner nonReentrant whenNotPaused {
+        require(atcAmount > 0 && atcAmount <= atcForLiquidity, "Invalid amount");
+        require(atcAmount >= MIN_ATC_FOR_PROCESSING, "Below minimum");
+        
+        uint256 halfAtc = atcAmount / 2;
+        uint256 otherHalf = atcAmount - halfAtc;
+        
+        uint256 initialBalance = address(this).balance;
+        
+        // Swap half for BNB
+        require(_swapTokensForBNB(halfAtc), "Swap failed");
+        
+        uint256 bnbReceived = address(this).balance - initialBalance;
+        require(bnbReceived > 0, "No BNB received");
+        
+        // Add liquidity
+        (bool success, uint256 lpTokensReceived) = _addLiquidity(otherHalf, bnbReceived);
+        require(success, "Liquidity addition failed");
+        
+        // Update state on success
+        atcForLiquidity -= atcAmount;
+        unchecked {
+            totalLiquidityAdded = totalLiquidityAdded + otherHalf;
+            lpTokensInContract = lpTokensInContract + lpTokensReceived;
+        }
+    }
+
+    // ======== Flexible Liquidity Management ========
+    function addContractATCToLiquidity(uint256 atcAmount) external onlyOwner nonReentrant whenNotPaused {
+        uint256 availableATC = balanceOf(address(this)) - atcForLiquidity; // Exclude tax-allocated ATC
+        require(atcAmount > 0 && atcAmount <= availableATC, "Invalid amount");
+        require(atcAmount >= MIN_ATC_FOR_PROCESSING, "Below minimum");
+        
+        uint256 halfAtc = atcAmount / 2;
+        uint256 otherHalf = atcAmount - halfAtc;
+        
+        uint256 initialBalance = address(this).balance;
+        
+        // Swap half for BNB
+        require(_swapTokensForBNB(halfAtc), "Swap failed");
+        
+        uint256 bnbReceived = address(this).balance - initialBalance;
+        require(bnbReceived > 0, "No BNB received");
+        
+        // Add liquidity
+        (bool success, uint256 lpTokensReceived) = _addLiquidity(otherHalf, bnbReceived);
+        require(success, "Liquidity addition failed");
+        
+        // Update state
+        unchecked {
+            totalLiquidityAdded = totalLiquidityAdded + otherHalf;
+            lpTokensInContract = lpTokensInContract + lpTokensReceived;
+        }
+    }
+
+    function withdrawContractATC(uint256 amount) external onlyOwner nonReentrant {
+        uint256 availableATC = balanceOf(address(this)) - atcForLiquidity; // Exclude tax-allocated ATC
+        require(amount > 0 && amount <= availableATC, "Invalid amount");
+        
+        super._update(address(this), owner(), amount);
+    }
+
+    function addCustomLiquidity(uint256 atcAmount, uint256 bnbAmount) external onlyOwner nonReentrant whenNotPaused {
+        uint256 availableATC = balanceOf(address(this)) - atcForLiquidity;
+        uint256 availableBNB = address(this).balance;
+        
+        require(atcAmount > 0 && atcAmount <= availableATC, "Invalid ATC amount");
+        require(bnbAmount > 0 && bnbAmount <= availableBNB, "Invalid BNB amount");
+        
+        // Add liquidity with custom amounts
+        (bool success, uint256 lpTokensReceived) = _addLiquidity(atcAmount, bnbAmount);
+        require(success, "Liquidity addition failed");
+        
+        // Update state
+        unchecked {
+            totalLiquidityAdded = totalLiquidityAdded + atcAmount;
+            lpTokensInContract = lpTokensInContract + lpTokensReceived;
+        }
+    }
+    
     // ======== Emission Logic ========
     function _updateEmission() private {
         uint256 currentDay = block.timestamp / 1 days;
@@ -692,19 +819,43 @@ contract ATC is ERC20, Ownable, ReentrancyGuard, Pausable {
         }
         
         if (currentDay > lastEmissionDay) {
-            if (currentDay <= PHASE1_END) {
-                dailyEmission = PHASE1_RATE;
-            } else if (currentDay <= PHASE2_END) {
-                uint256 elapsed = currentDay - PHASE1_END;
-                uint256 rampDuration = PHASE2_END - PHASE1_END;
-                uint256 increment = ((PHASE2_PEAK - PHASE1_RATE) * elapsed) / rampDuration;
-                dailyEmission = PHASE1_RATE + increment;
+            // Calculate emission based on new schedule
+            if (currentDay <= 365) {
+                // Phase 1: Graduated start (month-based)
+                uint256 month = ((currentDay - 1) / 30) + 1;
+                if (month > 12) month = 12;
+                dailyEmission = month * 100 * 10**18;
+            } else if (currentDay <= 1825) {
+                // Phase 2: Stability plateau
+                dailyEmission = 1500 * 10**18;
+            } else if (currentDay <= 3650) {
+                // Phase 3: Growth peak
+                uint256 yearInPhase = ((currentDay - 1825) / 365) + 1;
+                if (yearInPhase == 1) dailyEmission = 2000 * 10**18;
+                else if (yearInPhase == 2) dailyEmission = 2500 * 10**18;
+                else if (yearInPhase == 3) dailyEmission = 3000 * 10**18;
+                else if (yearInPhase == 4) dailyEmission = 3500 * 10**18;
+                else dailyEmission = 4000 * 10**18;
+            } else if (currentDay <= 5840) {
+                // Phase 4: Controlled decline
+                uint256 yearInPhase = ((currentDay - 3650) / 365) + 1;
+                if (yearInPhase == 1) dailyEmission = 3500 * 10**18;
+                else if (yearInPhase == 2) dailyEmission = 3000 * 10**18;
+                else if (yearInPhase == 3) dailyEmission = 2500 * 10**18;
+                else if (yearInPhase == 4) dailyEmission = 2000 * 10**18;
+                else if (yearInPhase == 5) dailyEmission = 1500 * 10**18;
+                else dailyEmission = 1200 * 10**18;
             } else {
-                // Phase 3: Exponential decay
-                uint256 daysSincePhase3 = currentDay - PHASE2_END;
-                uint256 decayFactor = _pow(PHASE3_DECAY_SCALED, daysSincePhase3, 10**18);
-                uint256 newEmission = (PHASE2_PEAK * decayFactor) / 10**18;
-                dailyEmission = newEmission < MIN_EMISSION ? MIN_EMISSION : newEmission;
+                // Phase 5: Ultra-sound money with exponential decay
+                uint256 daysSincePhase5 = currentDay - 5840;
+                uint256 startEmission = 1000 * 10**18;
+                
+                // 0.01% daily decay
+                uint256 decayFactor = _pow(999900 * 10**18 / 1000000, daysSincePhase5, 10**18);
+                uint256 newEmission = (startEmission * decayFactor) / 10**18;
+                
+                // Enforce minimum
+                dailyEmission = newEmission < 100 * 10**18 ? 100 * 10**18 : newEmission;
             }
             
             lastEmissionDay = currentDay;
@@ -765,12 +916,16 @@ contract ATC is ERC20, Ownable, ReentrancyGuard, Pausable {
             dailyEmission - emittedToday : 0;
         
         uint256 phase;
-        if (currentDay <= PHASE1_END) {
+        if (currentDay <= 365) {
             phase = 1;
-        } else if (currentDay <= PHASE2_END) {
+        } else if (currentDay <= 1825) {
             phase = 2;
-        } else {
+        } else if (currentDay <= 3650) {
             phase = 3;
+        } else if (currentDay <= 5840) {
+            phase = 4;
+        } else {
+            phase = 5;
         }
         
         return (
