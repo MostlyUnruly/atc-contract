@@ -1,0 +1,56 @@
+name: Advanced Testnet Testing
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+  schedule:
+    - cron: '0 6,18 * * *' # Run twice daily
+
+jobs:
+  advanced-testnet-tests:
+    runs-on: ubuntu-latest
+    if: contains(github.event.head_commit.message, '[advanced-tests]') || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20.x'
+        cache: 'npm'
+    
+    - name: Install dependencies
+      run: npm ci --legacy-peer-deps
+    
+    - name: Compile contracts
+      run: npx hardhat compile
+    
+    - name: Run Advanced Time Travel Tests
+      run: npx hardhat run scripts/advanced-testnet-tests.js --network bscTestnet
+      env:
+        PRIVATE_KEY: ${{ secrets.TESTNET_PRIVATE_KEY }}
+        BSC_RPC_URL: ${{ secrets.BSC_RPC_URL }}
+        CONTRACT_ADDRESS: ${{ secrets.TESTNET_CONTRACT_ADDRESS }}
+    
+    - name: Run Stress Test Suite
+      run: npx hardhat run scripts/stress-test-suite.js --network bscTestnet
+      env:
+        PRIVATE_KEY: ${{ secrets.TESTNET_PRIVATE_KEY }}
+        BSC_RPC_URL: ${{ secrets.BSC_RPC_URL }}
+        CONTRACT_ADDRESS: ${{ secrets.TESTNET_CONTRACT_ADDRESS }}
+    
+    - name: Generate Test Report
+      run: |
+        echo "## 🚀 Advanced Testnet Test Results" >> $GITHUB_STEP_SUMMARY
+        echo "- ✅ Time travel emission testing" >> $GITHUB_STEP_SUMMARY
+        echo "- ✅ Tax system stress testing" >> $GITHUB_STEP_SUMMARY
+        echo "- ✅ Anti-whale protection testing" >> $GITHUB_STEP_SUMMARY
+        echo "- ✅ Timelock system verification" >> $GITHUB_STEP_SUMMARY
+        echo "- ✅ Emergency functions testing" >> $GITHUB_STEP_SUMMARY
+        echo "- ✅ Multi-day emission simulation" >> $GITHUB_STEP_SUMMARY
+        echo "- ✅ Gas usage analysis" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "🌐 [View Contract on BSCScan](https://testnet.bscscan.com/address/${{ secrets.TESTNET_CONTRACT_ADDRESS }})" >> $GITHUB_STEP_SUMMARY
