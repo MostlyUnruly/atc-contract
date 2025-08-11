@@ -20,7 +20,7 @@
     "@nomicfoundation/hardhat-toolbox": "^6.0.0",
     "chai": "^4.5.0",
     "codecov": "^3.8.2",
-    "dotenv": "^17.0.0",
+    "dotenv": "^17.2.1",
     "hardhat": "^2.25.0",
     "mocha": "^11.7.1",
     "solhint": "^5.2.0",
