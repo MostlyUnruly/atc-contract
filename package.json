@@ -21,7 +21,7 @@
     "chai": "^4.5.0",
     "codecov": "^3.8.2",
     "dotenv": "^17.0.0",
-    "hardhat": "^2.25.0",
+    "hardhat": "^2.26.2",
     "mocha": "^11.7.1",
     "solhint": "^5.2.0",
     "solidity-coverage": "^0.8.16"
