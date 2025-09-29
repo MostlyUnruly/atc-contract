@@ -18,7 +18,7 @@
   "description": "",
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^6.0.0",
-    "chai": "^4.5.0",
+    "chai": "^6.2.0",
     "codecov": "^3.8.2",
     "dotenv": "^17.0.0",
     "hardhat": "^2.25.0",
